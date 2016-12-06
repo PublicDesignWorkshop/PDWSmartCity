@@ -1,0 +1,43 @@
+@import "./../../scss/variables.scss";
+
+.snapshot-item {
+  margin: 4px 4px 4px 16px;
+  padding: 4px 8px;
+  color: $snapshot-font-color;
+  cursor: pointer;
+
+  display: -webkit-box;           /* OLD - iOS 6-, Safari 3.1-6 */
+  display: -moz-box;              /* OLD - Firefox 19- (buggy but mostly works) */
+  display: -ms-flexbox;           /* TWEENER - IE 10 */
+  display: -webkit-flex;          /* NEW - Chrome */
+  display: flex;                  /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+  -webkit-flex-direction: row;    /* Safari 6.1+ */
+          flex-direction: row;    /* NEW, Spec - Opera 12.1, Firefox 20+ */
+  border-radius: 2px;
+  &:hover {
+    background-color: $snapshot-hover-background-color;
+  }
+
+  > .title {
+    padding-top: 2px;
+    margin-right: 8px;
+  }
+
+  > .sensor-item {
+    display: -webkit-box;           /* OLD - iOS 6-, Safari 3.1-6 */
+    display: -moz-box;              /* OLD - Firefox 19- (buggy but mostly works) */
+    display: -ms-flexbox;           /* TWEENER - IE 10 */
+    display: -webkit-flex;          /* NEW - Chrome */
+    display: flex;                  /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+    -webkit-flex-direction: row;    /* Safari 6.1+ */
+            flex-direction: row;    /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+    font-size: $snapshot-sensor-item-font-size;
+    padding: 4px;
+    margin: auto 2px;
+    color: $snapshot-sensor-item-font-color;
+    border-radius: 2px;
+  }
+}

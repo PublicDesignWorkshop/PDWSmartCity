@@ -1,0 +1,23 @@
+@import "./../../scss/variables.scss";
+
+.sensor-graph {
+  margin: 4px;
+  width: calc(100% - 8px);
+  height: 20vh;
+
+  -webkit-user-select: none;
+     -moz-user-select: none;
+      -ms-user-select: none;
+          user-select: none;
+
+  > .title {
+    padding: 2px 4px 2px 16px;
+    text-transform: uppercase;
+    font-family: $font-narrow;
+    font-weight: 700;
+  }
+
+  > .body {
+
+  }
+}

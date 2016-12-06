@@ -1,0 +1,9 @@
+{
+  "sitename": "PDW Smart City",
+  "indoor": "Indoor",
+  "outdoor": "Outdoor",
+  "importdata": "Import Data:",
+  "dataimportmessage": " sensor data points are imported.",
+  "snapshotimportmessage": " snapshot points are imported.",
+  "snapshottitle": "Snapshots"
+}

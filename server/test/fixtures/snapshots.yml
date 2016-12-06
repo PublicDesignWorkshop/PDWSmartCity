@@ -1,0 +1,19 @@
+# Read about fixtures at http://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  location_id: MyString
+  timestamp: MyString
+  timeinterval: MyString
+  sensors: MyString
+  comments: MyString
+  questions: MyString
+  answers: MyString
+
+two:
+  location_id: MyString
+  timestamp: MyString
+  timeinterval: MyString
+  sensors: MyString
+  comments: MyString
+  questions: MyString
+  answers: MyString

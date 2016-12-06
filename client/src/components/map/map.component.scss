@@ -1,0 +1,10 @@
+@import "./../../scss/variables.scss";
+@import "./../../../node_modules/leaflet/dist/leaflet.css";
+
+.map {
+  position: absolute;
+  top: $header-height;
+  left: 0;
+  width: 100%;
+  height: calc(100% - #{$header-height});
+}

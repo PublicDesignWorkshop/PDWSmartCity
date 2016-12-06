@@ -1,0 +1,51 @@
+@import "./../../scss/variables.scss";
+
+.header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  width: 100vw;
+  height: $header-height;
+  background-color: $header-background-color;
+
+  display: -webkit-box;           /* OLD - iOS 6-, Safari 3.1-6 */
+  display: -moz-box;              /* OLD - Firefox 19- (buggy but mostly works) */
+  display: -ms-flexbox;           /* TWEENER - IE 10 */
+  display: -webkit-flex;          /* NEW - Chrome */
+  display: flex;                  /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+  -webkit-flex-direction: row;    /* Safari 6.1+ */
+          flex-direction: row;    /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+  -webkit-align-content: space-between;
+          align-content: space-between;
+
+  > .left {
+    display: -webkit-box;           /* OLD - iOS 6-, Safari 3.1-6 */
+    display: -moz-box;              /* OLD - Firefox 19- (buggy but mostly works) */
+    display: -ms-flexbox;           /* TWEENER - IE 10 */
+    display: -webkit-flex;          /* NEW - Chrome */
+    display: flex;                  /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+    -webkit-flex-direction: row;    /* Safari 6.1+ */
+            flex-direction: row;    /* NEW, Spec - Opera 12.1, Firefox 20+ */
+
+    > .logo {
+      width: 48px;
+      padding: 4px;
+      &:after {
+        content: url(pdw_thumbnail_40x40.png);
+      }
+    }
+
+    > .sitename {
+      font-weight: 700;
+        font-family: $font-narrow;
+        color: $header-font-color;
+        font-size: $header-font-size;
+        text-transform: uppercase;
+        margin: auto;
+    }
+  }
+}

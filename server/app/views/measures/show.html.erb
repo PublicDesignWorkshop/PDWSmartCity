@@ -1,0 +1,44 @@
+<p id="notice"><%= notice %></p>
+
+<p>
+  <strong>Type:</strong>
+  <%= @measure.type %>
+</p>
+
+<p>
+  <strong>Model:</strong>
+  <%= @measure.model %>
+</p>
+
+<p>
+  <strong>Value:</strong>
+  <%= @measure.value %>
+</p>
+
+<p>
+  <strong>Unit:</strong>
+  <%= @measure.unit %>
+</p>
+
+<p>
+  <strong>Timestamp:</strong>
+  <%= @measure.timestamp %>
+</p>
+
+<p>
+  <strong>Latitude:</strong>
+  <%= @measure.latitude %>
+</p>
+
+<p>
+  <strong>Longitude:</strong>
+  <%= @measure.longitude %>
+</p>
+
+<p>
+  <strong>Location:</strong>
+  <%= @measure.location_id %>
+</p>
+
+<%= link_to 'Edit', edit_measure_path(@measure) %> |
+<%= link_to 'Back', measures_path %>

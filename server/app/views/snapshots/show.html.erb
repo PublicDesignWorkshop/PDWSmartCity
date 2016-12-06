@@ -1,0 +1,39 @@
+<p id="notice"><%= notice %></p>
+
+<p>
+  <strong>Location:</strong>
+  <%= @snapshot.location_id %>
+</p>
+
+<p>
+  <strong>Timestamp:</strong>
+  <%= @snapshot.timestamp %>
+</p>
+
+<p>
+  <strong>Timeinterval:</strong>
+  <%= @snapshot.timeinterval %>
+</p>
+
+<p>
+  <strong>Sensors:</strong>
+  <%= @snapshot.sensors %>
+</p>
+
+<p>
+  <strong>Comments:</strong>
+  <%= @snapshot.comments %>
+</p>
+
+<p>
+  <strong>Questions:</strong>
+  <%= @snapshot.questions %>
+</p>
+
+<p>
+  <strong>Answers:</strong>
+  <%= @snapshot.answers %>
+</p>
+
+<%= link_to 'Edit', edit_snapshot_path(@snapshot) %> |
+<%= link_to 'Back', snapshots_path %>
