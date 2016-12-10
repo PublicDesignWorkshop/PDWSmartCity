@@ -63,6 +63,7 @@ URTouch  myTouch( 6, 5, 4, 3, 2);
 #define BRIGHTNESS_IN A1
 #define RCT_CS_PIN 53
 #define DUST_MEASURE_PIN A2
+#define CO_MEASURE_PIN A3
 #define DUST_LED_PIN 18
 
 #define SELECT_PREV_SENSOR 14
@@ -74,7 +75,7 @@ URTouch  myTouch( 6, 5, 4, 3, 2);
 
 #define GRAPH_SIZE 20 // the number of each sensor data stored in memory to render a graph
 #define SAMPLE_SIZE 10
-#define SENSOR_SIZE 6 // the total number of sensors attached to the device. It needs to be changed manunally if more sensors are added.
+#define SENSOR_SIZE 7 // the total number of sensors attached to the device. It needs to be changed manunally if more sensors are added.
 
 #define SCREEN_WIDTH 480
 #define SCREEN_HEIGHT 270
@@ -93,6 +94,7 @@ typedef struct {
   int humidity[GRAPH_SIZE];
   int brightness[GRAPH_SIZE];
   int dust[GRAPH_SIZE];
+  int co[GRAPH_SIZE];
 } MEASURES;
 
 typedef struct {
@@ -169,16 +171,17 @@ void setup() {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // temperature
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // pressure
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // humidity
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} // dust
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // dust
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} // co level
   };
 
   sensors = {
     0,
-    {"NOISE",     "BRIGHTNESS", "TEMPERATURE",  "PRESSURE",  "HUMIDITY",  "DUST"},              // types of sensors
-    {"dB",        "lux",        "F",           "kPA",      "%",           "mg"},                // units of sensors
-    {0,           0,            0,              80000,      0,            0},                   // min value of sensors
-    {150,         1000,         125,            120000,     100,          800},                 // max value of sensors
-    {"SEN-12642", "TEMT6000",   "BME280",       "BME280",   "BME280",     "GP2Y1010AU0F"}       // model number of sensors
+    {"NOISE",     "BRIGHTNESS", "TEMPERATURE",  "PRESSURE",  "HUMIDITY",  "DUST",         "CO"},              // types of sensors
+    {"dB",        "lux",        "F",           "kPA",      "%",           "mg",           "ppm"},                // units of sensors
+    {0,           0,            0,              80000,      0,            0,              0},                   // min value of sensors
+    {150,         1000,         125,            120000,     100,          800,            500},                 // max value of sensors
+    {"SEN-12642", "TEMT6000",   "BME280",       "BME280",   "BME280",     "GP2Y1010AU0F", "MQ-7"}       // model number of sensors
   };
 
   is_recording = false;
@@ -234,12 +237,13 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
   digitalWrite(IRQ_GATE_IN, !digitalRead(IRQ_GATE_IN));
   // Read sensor data and render on the screen
   measures.sample += 1;
-  if (is_changing_sensor && (measures.sample == SAMPLE_SIZE - 1)) {
+  if (is_changing_sensor && (measures.sample == SAMPLE_SIZE - 5)) {
     is_changing_sensor = false;
   }
   measureNoise();
   measureBrightness();
   measureDust();
+  measureCO();
   if (measures.sample >= SAMPLE_SIZE) {    
     unrenderActiveSensorGraph();
     updateNoise();
@@ -248,6 +252,7 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
     updatePressure();
     updateHumidity();
     updateDust();
+    updateCO();
     if (!is_changing_sensor) {
       renderActiveSensorGraph();
     }
@@ -268,6 +273,8 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
           result += (String) measures.humidity[GRAPH_SIZE-2] + " ";
         } else if ((String) sensors.types[i] == "DUST") {
           result += (String) measures.dust[GRAPH_SIZE-2] + " ";
+        } else if ((String) sensors.types[i] == "CO") {
+          result += (String) measures.co[GRAPH_SIZE-2] + " ";
         } else {
           result += "null ";
         }
@@ -282,13 +289,19 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
   }
 }
 
+void measureCO() {
+  float voltage = analogRead(CO_MEASURE_PIN) * 5 / 1024;
+  float ppm = 3.027 * pow(2.718, 1.0698 * voltage);
+  measures.co[GRAPH_SIZE-1] = (measures.co[GRAPH_SIZE-1] * measures.sample + ppm) / (measures.sample + 1);
+}
+void updateCO() {
+  for (int i=0; i<GRAPH_SIZE-1; i++) {
+    measures.co[i] = measures.co[i+1];
+  }
+  measures.co[GRAPH_SIZE-1] = 0;
+}
+
 void measureDust() {
-
-  #define DUST_SAMPLING_TIME 280
-#define DUST_DELTA_TIME 40
-#define DUST_SLEEP_TIME 9680
-
-
   digitalWrite(DUST_LED_PIN, LOW);
   delayMicroseconds(DUST_SAMPLING_TIME);
   float voMeasured = analogRead(DUST_MEASURE_PIN);
@@ -302,6 +315,7 @@ void measureDust() {
   if ( dustDensity < 0) {
     dustDensity = 0.00;
   }  
+  Serial.println(calcVoltage);
   measures.dust[GRAPH_SIZE-1] = (measures.dust[GRAPH_SIZE-1] * measures.sample + dustDensity) / (measures.sample + 1);
 }
 void updateDust() {
@@ -378,6 +392,7 @@ void loop() {
   selectActiveSensor();
   detectRecordStatus();
   detectNewSnapshot();
+  renderActiveSensorName();
   delay(100);
 }
 
@@ -390,7 +405,6 @@ void selectActiveSensor() {
       sensors.active = SENSOR_SIZE - 1;
     }
     myGLCD.clrScr();
-    renderActiveSensorName();
     is_changing_sensor = true;
   } else if (select_next_sensor_prev_value == HIGH && select_next_sensor_cur_value == LOW) {
     sensors.active++;
@@ -398,7 +412,6 @@ void selectActiveSensor() {
       sensors.active = 0;
     }
     myGLCD.clrScr();
-    renderActiveSensorName();
     is_changing_sensor = true;
   }
   select_prev_sensor_prev_value = select_prev_sensor_cur_value;
@@ -506,6 +519,8 @@ void renderActiveSensorValue() {
     value = measures.humidity[GRAPH_SIZE-2];
   } else if (sensors.types[sensors.active] == "DUST") {
     value = measures.dust[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "CO") {
+    value = measures.co[GRAPH_SIZE-2];
   }
   String cur_rendered_sensor_value = (String) value;
   myGLCD.setColor(0, 0, 0);
@@ -552,6 +567,9 @@ void renderGraphHelper() {
     } else if (sensors.types[sensors.active] == "DUST") {
       graphY1 = map(min(max(measures.dust[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
       graphY2 = map(min(max(measures.dust[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    } else if (sensors.types[sensors.active] == "CO") {
+      graphY1 = map(min(max(measures.co[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.co[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
     }
     myGLCD.drawLine(60 + 15 * i, graphY1, 60 + 15 * (i + 1), graphY2);
   }
