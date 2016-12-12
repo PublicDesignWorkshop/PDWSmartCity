@@ -1,23 +1,19 @@
+// Import dependent libraries
+
 #include <Time.h>
 #include <TimeLib.h>
-
-// Import dependent libraries
 
 #include <SPI.h>
 #include <SD.h>
 
-#include <SparkFunDS1307RTC.h>
-#include <SparkFunBME280.h>
-#include "Wire.h"
-
-#include <Time.h>
-#include <TimeLib.h>
+#include <SparkFunDS3234RTC.h>
+#include <SparkFun_RHT03.h>
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-#include <URTouch.h>
-#include <URTouchCD.h>
+//#include <URTouch.h>
+//#include <URTouchCD.h>
 
 #include <memorysaver.h>
 #include <UTFT.h>
@@ -53,8 +49,7 @@ UTFT myGLCD(ITDB43,38,39,40,41);
 // Teensy 3.x TFT Test Board                   : 26,31,27,28,29
 // ElecHouse TFT LCD/SD Shield for Arduino Due : 25,26,27,29,30
 //
-URTouch  myTouch( 6, 5, 4, 3, 2);
-
+//URTouch  myTouch( 6, 5, 4, 3, 2);
 
 #define IRQ_GATE_IN 13  // We use timer interrupt to handle measuring sensors every exact 0.1 second
 
@@ -65,17 +60,19 @@ URTouch  myTouch( 6, 5, 4, 3, 2);
 #define DUST_MEASURE_PIN A2
 #define CO_MEASURE_PIN A3
 #define DUST_LED_PIN 18
+#define RHT03_DATA_PIN A4
 
 #define SELECT_PREV_SENSOR 14
 #define SELECT_NEXT_SENSOR 15
 #define TOGGLE_RECORD 16
 #define NEW_SNAPSHOT 17
 #define SD_CARD 53
+#define RTC_PIN 19
 
 
 #define GRAPH_SIZE 20 // the number of each sensor data stored in memory to render a graph
 #define SAMPLE_SIZE 10
-#define SENSOR_SIZE 7 // the total number of sensors attached to the device. It needs to be changed manunally if more sensors are added.
+#define SENSOR_SIZE 6 // the total number of sensors attached to the device. It needs to be changed manunally if more sensors are added.
 
 #define SCREEN_WIDTH 480
 #define SCREEN_HEIGHT 270
@@ -90,7 +87,6 @@ typedef struct {
   time_t timestamp;
   int noise[GRAPH_SIZE];
   int temperature[GRAPH_SIZE];
-  long pressure[GRAPH_SIZE];
   int humidity[GRAPH_SIZE];
   int brightness[GRAPH_SIZE];
   int dust[GRAPH_SIZE];
@@ -119,7 +115,7 @@ int total_snapshots;
 int total_records;
 bool is_sd_card_in;
 bool is_changing_sensor;
-BME280 bmeSensor;
+RHT03 rht; // This creates a RTH03 object, which we'll use to interact with the sensor
 
 // set up variables using the SD utility library functions:
 Sd2Card card;
@@ -131,37 +127,43 @@ File dataFile;
 void setup() {
   // Serial Setting
   Serial.begin(9600);
-  
-  // Initialize timer 1
-  cli();          // disable global interrupts
-  TCCR1A = 0;     // set entire TCCR1A register to 0
-  TCCR1B = 0;     // same for TCCR1B
+  while(!Serial){} //wait for Mega
 
-  // set compare match register to desired timer count:
-  OCR1A = 15624 * 0.1;  // Intterupt timer every 0.1 second.
-  // turn on CTC mode:
-  TCCR1B |= (1 << WGM12);
-  // Set CS10 and CS12 bits for 1024 prescaler:
-  TCCR1B |= (1 << CS10);
-  TCCR1B |= (1 << CS12);
-  // enable timer compare interrupt:
-  TIMSK1 |= (1 << OCIE1A);
-  // enable global interrupts:
-  sei();
+  pinMode(RTC_PIN, OUTPUT);
+  digitalWrite(RTC_PIN,HIGH);
 
-  // Initialize ttf screen
-  myGLCD.InitLCD();
-  myGLCD.clrScr();
-  myTouch.InitTouch();
-  myTouch.setPrecision(PREC_HI);
+  SPI.begin();
+  pinMode(SD_CARD, OUTPUT); //sets Mega in SPI master mode.
 
+  SPI.setDataMode(SPI_MODE0);
   // Initialize sd card
-  if (!SD.begin(SD_CARD)) {
-    is_sd_card_in = false;
-  } else {
-    is_sd_card_in = true;
+  if (card.init(SPI_HALF_SPEED, SD_CARD)) {
+    if (!SD.begin(SD_CARD)) {
+      is_sd_card_in = false;
+    } else {
+      is_sd_card_in = true;
+    }
+    // check the number of data-*.pdw files
+    File root = SD.open("/");
+    total_records = 0;
+    while (true) {
+      File entry =  root.openNextFile();
+      if (! entry) {
+        // no more files
+        break;
+      } else if (((String) entry.name()).endsWith(".PDW") || ((String) entry.name()).endsWith(".pdw")) {
+        total_records++;
+      }
+    }
   }
+  
 
+  SPI.setDataMode(SPI_MODE3);
+  rtc.enable();
+  rtc.begin(RTC_PIN);
+  rtc.set12Hour();
+//  rtc.autoTime(); // only reset the time when the time is not correct.
+  SPI.setDataMode(SPI_MODE0);
 
   measures = { 
     0, 
@@ -169,7 +171,6 @@ void setup() {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // noise
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // brightness
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // temperature
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // pressure
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // humidity
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, // dust
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} // co level
@@ -177,11 +178,11 @@ void setup() {
 
   sensors = {
     0,
-    {"NOISE",     "BRIGHTNESS", "TEMPERATURE",  "PRESSURE",  "HUMIDITY",  "DUST",         "CO"},              // types of sensors
-    {"dB",        "lux",        "F",           "kPA",      "%",           "mg",           "ppm"},                // units of sensors
-    {0,           0,            0,              80000,      0,            0,              0},                   // min value of sensors
-    {150,         1000,         125,            120000,     100,          800,            500},                 // max value of sensors
-    {"SEN-12642", "TEMT6000",   "BME280",       "BME280",   "BME280",     "GP2Y1010AU0F", "MQ-7"}       // model number of sensors
+    {"NOISE",     "BRIGHTNESS", "TEMPERATURE", "HUMIDITY",   "DUST",         "CO"},              // types of sensors
+    {"dB",        "lux",        "F",           "%",          "mg",           "ppm"},                // units of sensors
+    {0,           0,            0,             0,            0,              0},                   // min value of sensors
+    {150,         1000,         125,           100,          800,            500},                 // max value of sensors
+    {"SEN-12642", "TEMT6000",   "RHT03",       "RHT03",      "GP2Y1010AU0F", "MQ-7"}       // model number of sensors
   };
 
   is_recording = false;
@@ -193,69 +194,48 @@ void setup() {
   pinMode(TOGGLE_RECORD, INPUT);
   pinMode(DUST_LED_PIN, OUTPUT);
 
-  // Initialize IC2 connections
-  rtc.begin();
-  rtc.enable();
-  rtc.set12Hour();
-//  rtc.autoTime(); // only reset the time when the time is not correct.
-  rtc.update();
-  
-  
+  // Call rht.begin() to initialize the sensor and our data pin
+  rht.begin(RHT03_DATA_PIN);
 
-  //For I2C, enable the following and disable the SPI section
-  bmeSensor.settings.commInterface = I2C_MODE;
-  bmeSensor.settings.I2CAddress = 0x77;
-  bmeSensor.settings.runMode = 3; //Forced mode
-  bmeSensor.settings.tStandby = 0;
-  bmeSensor.settings.filter = 0;
-  bmeSensor.settings.tempOverSample = 1;
-  bmeSensor.settings.pressOverSample = 1;
-  bmeSensor.settings.humidOverSample = 1;
-  bmeSensor.begin();
-
-  
-  // check the number of data-*.pdw files
-  File root = SD.open("/");
-  total_records = 0;
-  while (true) {
-    File entry =  root.openNextFile();
-    if (! entry) {
-      // no more files
-      break;
-    } else if (((String) entry.name()).endsWith(".PDW") || ((String) entry.name()).endsWith(".pdw")) {
-      total_records++;
-    }
-  }
-
-  
-
-  // Render initial screen interface
+  // Initialize ttf screen
+  myGLCD.InitLCD();
+  myGLCD.clrScr();
+//  myTouch.InitTouch();
   renderActiveSensorName();
 }
 
-ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
-  digitalWrite(IRQ_GATE_IN, !digitalRead(IRQ_GATE_IN));
-  // Read sensor data and render on the screen
-  measures.sample += 1;
-  if (is_changing_sensor && (measures.sample == SAMPLE_SIZE - 5)) {
-    is_changing_sensor = false;
-  }
-  measureNoise();
-  measureBrightness();
-  measureDust();
-  measureCO();
-  if (measures.sample >= SAMPLE_SIZE) {    
+
+
+void loop() {
+  
+  
+  static int8_t lastSecond = -1;
+  // Call rtc.update() to update all rtc.seconds(), rtc.minutes(),
+  // etc. return functions.
+  SPI.setDataMode(SPI_MODE3);
+  rtc.update();
+  if (rtc.second() != lastSecond) { // If the second has changed
+    renderTime(); // Print the new time
+    lastSecond = rtc.second(); // Update lastSecond value
+
+    measureNoise();
+    measureBrightness();
+    measureDust();
+    measureCO();
+  
+    measureTemperatureAndHumidity();
+
+    
     unrenderActiveSensorGraph();
     updateNoise();
     updateBrightness();
     updateTemperature();
-    updatePressure();
     updateHumidity();
     updateDust();
     updateCO();
-    if (!is_changing_sensor) {
-      renderActiveSensorGraph();
-    }
+    renderActiveSensorGraph();
+    renderActiveSensorValue();
+    
     if (dataFile) {
       for (int i = 0; i < SENSOR_SIZE; i++) {
         String result = (String) sensors.types[i] + " ";
@@ -267,9 +247,7 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
           result += (String) measures.brightness[GRAPH_SIZE-2] + " ";
         } else if ((String) sensors.types[i] == "TEMPERATURE") {
           result += (String) measures.temperature[GRAPH_SIZE-2] + " ";
-        } else if ((String) sensors.types[i] == "PRESSURE") {
-          result += (String) measures.pressure[GRAPH_SIZE-2] + " ";
-        } else if ((String) sensors.types[i] == "HUMIDITY") {
+        }else if ((String) sensors.types[i] == "HUMIDITY") {
           result += (String) measures.humidity[GRAPH_SIZE-2] + " ";
         } else if ((String) sensors.types[i] == "DUST") {
           result += (String) measures.dust[GRAPH_SIZE-2] + " ";
@@ -285,14 +263,20 @@ ISR(TIMER1_COMPA_vect) {  // Call back function for timer 1
         dataFile.println(result);
       }
     }
-    measures.sample = 0;
   }
+  SPI.setDataMode(SPI_MODE0);
+
+  
+  detectActiveSensor();
+  detectRecordStatus();
+  detectNewSnapshot();
+  delay(100);
 }
 
 void measureCO() {
-  float voltage = analogRead(CO_MEASURE_PIN) * 5 / 1024;
-  float ppm = 3.027 * pow(2.718, 1.0698 * voltage);
-  measures.co[GRAPH_SIZE-1] = (measures.co[GRAPH_SIZE-1] * measures.sample + ppm) / (measures.sample + 1);
+//  float voltage = analogRead(CO_MEASURE_PIN) * 5 / 1024;
+//  measures.co[GRAPH_SIZE-1] = 3.027 * pow(2.718, 1.0698 * voltage);
+  measures.co[GRAPH_SIZE-1] = 0;
 }
 void updateCO() {
   for (int i=0; i<GRAPH_SIZE-1; i++) {
@@ -314,9 +298,8 @@ void measureDust() {
   float dustDensity = (0.17 * calcVoltage - 0.1) * 1000; 
   if ( dustDensity < 0) {
     dustDensity = 0.00;
-  }  
-  Serial.println(calcVoltage);
-  measures.dust[GRAPH_SIZE-1] = (measures.dust[GRAPH_SIZE-1] * measures.sample + dustDensity) / (measures.sample + 1);
+  }
+  measures.dust[GRAPH_SIZE-1] = dustDensity;
 }
 void updateDust() {
   for (int i=0; i<GRAPH_SIZE-1; i++) {
@@ -326,7 +309,7 @@ void updateDust() {
 }
 
 void measureNoise() {
-  measures.noise[GRAPH_SIZE-1] = (measures.noise[GRAPH_SIZE-1] * measures.sample + analogRead(NOISE_IN)) / (measures.sample + 1);
+  measures.noise[GRAPH_SIZE-1] = analogRead(NOISE_IN);
 }
 void updateNoise() {
   for (int i=0; i<GRAPH_SIZE-1; i++) {
@@ -336,7 +319,7 @@ void updateNoise() {
 }
 
 void measureBrightness() {
-    measures.brightness[GRAPH_SIZE-1] = (measures.brightness[GRAPH_SIZE-1] * measures.sample + analogRead(BRIGHTNESS_IN)) / (measures.sample + 1);
+    measures.brightness[GRAPH_SIZE-1] = analogRead(BRIGHTNESS_IN);
 }
 
 void updateBrightness() {
@@ -346,26 +329,22 @@ void updateBrightness() {
   measures.brightness[GRAPH_SIZE-1] = 0;
 }
 
-void measureTemperature() {
-  measures.temperature[GRAPH_SIZE-1] = (int) bmeSensor.readTempF();
+void measureTemperatureAndHumidity() {
+  // Call rht.update() to get new humidity and temperature values from the sensor.
+  int updateRet = rht.update();
+  if (updateRet == 1) {
+    measures.temperature[GRAPH_SIZE-1] = (int) rht.tempF();
+    measures.humidity[GRAPH_SIZE-1] = (long) rht.humidity();
+  } else {
+    measures.temperature[GRAPH_SIZE-1] = measures.temperature[GRAPH_SIZE-2];
+    measures.humidity[GRAPH_SIZE-1] = measures.humidity[GRAPH_SIZE-2];
+  }
 }
 void updateTemperature() {
   for (int i=0; i<GRAPH_SIZE-1; i++) {
     measures.temperature[i] = measures.temperature[i+1];
   }
   measures.temperature[GRAPH_SIZE-1] = 0;
-}
-void measurePressure() {
-  measures.pressure[GRAPH_SIZE-1] = (long) bmeSensor.readFloatPressure();
-}
-void updatePressure() {
-  for (int i=0; i<GRAPH_SIZE-1; i++) {
-    measures.pressure[i] = measures.pressure[i+1];
-  }
-  measures.pressure[GRAPH_SIZE-1] = 0;
-}
-void measureHumidity() {
-  measures.humidity[GRAPH_SIZE-1] = (long) bmeSensor.readFloatHumidity();
 }
 void updateHumidity() {
   for (int i=0; i<GRAPH_SIZE-1; i++) {
@@ -374,29 +353,13 @@ void updateHumidity() {
   measures.humidity[GRAPH_SIZE-1] = 0;
 }
 
-void loop() {
-  static int8_t lastSecond = -1;
-  // Call rtc.update() to update all rtc.seconds(), rtc.minutes(),
-  // etc. return functions.
-  rtc.update();
-  if (rtc.second() != lastSecond) { // If the second has changed
-    renderTime(); // Print the new time
-    lastSecond = rtc.second(); // Update lastSecond value
-  }
-  measureTemperature();
-  measurePressure();
-  measureHumidity();
-
-  
-  renderActiveSensorValue();
-  selectActiveSensor();
-  detectRecordStatus();
-  detectNewSnapshot();
-  renderActiveSensorName();
-  delay(100);
+void renderActiveSensorName() {
+  myGLCD.setFont(Sinclair_M);
+  myGLCD.setColor(255, 255, 255);
+  myGLCD.print(sensors.types[sensors.active] + " SENSOR       ", CENTER, 16);
 }
 
-void selectActiveSensor() {
+void detectActiveSensor() {
   int select_prev_sensor_cur_value = digitalRead(SELECT_PREV_SENSOR);
   int select_next_sensor_cur_value = digitalRead(SELECT_NEXT_SENSOR);
   if (select_prev_sensor_prev_value == HIGH && select_prev_sensor_cur_value == LOW) {
@@ -405,17 +368,93 @@ void selectActiveSensor() {
       sensors.active = SENSOR_SIZE - 1;
     }
     myGLCD.clrScr();
-    is_changing_sensor = true;
+    renderActiveSensorName();
   } else if (select_next_sensor_prev_value == HIGH && select_next_sensor_cur_value == LOW) {
     sensors.active++;
     if (sensors.active >= SENSOR_SIZE) {
       sensors.active = 0;
     }
     myGLCD.clrScr();
-    is_changing_sensor = true;
+    renderActiveSensorName();
   }
   select_prev_sensor_prev_value = select_prev_sensor_cur_value;
   select_next_sensor_prev_value = select_next_sensor_cur_value;
+}
+
+void renderActiveSensorValue() {
+  long value = 0;
+  if (sensors.types[sensors.active] == "NOISE") {
+    value = measures.noise[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "BRIGHTNESS") {
+    value = measures.brightness[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "TEMPERATURE") {
+    value = measures.temperature[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "HUMIDITY") {
+    value = measures.humidity[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "DUST") {
+    value = measures.dust[GRAPH_SIZE-2];
+  } else if (sensors.types[sensors.active] == "CO") {
+    value = measures.co[GRAPH_SIZE-2];
+  }
+  String cur_rendered_sensor_value = (String) value;
+  myGLCD.setColor(0, 0, 0);
+  myGLCD.setBackColor(0, 0, 0);
+  myGLCD.fillRect(16, 60, 16 + (SENSOR_VALUE_DIGIT - cur_rendered_sensor_value.length()) * 32 , 60 + 50);
+  myGLCD.setColor(255, 255, 255);
+  myGLCD.setFont(SevenSegNumFontPlusPlus);
+  myGLCD.print(cur_rendered_sensor_value, 16 + (SENSOR_VALUE_DIGIT - cur_rendered_sensor_value.length()) * 32, 60);
+  myGLCD.setFont(Sinclair_M);
+  myGLCD.print(sensors.units[sensors.active], 32 + SENSOR_VALUE_DIGIT * 32, 60 + 30);
+}
+
+void unrenderActiveSensorGraph() {
+  myGLCD.setColor(0, 0, 0);
+  renderGraphHelper();
+}
+
+void renderActiveSensorGraph() {
+  myGLCD.setColor(0, 255, 0);
+  renderGraphHelper();
+}
+
+void renderGraphHelper() {
+  long minvalue = sensors.mins[sensors.active];
+  long maxvalue = sensors.maxs[sensors.active];
+  for (int i=0; i<GRAPH_SIZE-2; i++) {
+    int graphY1 = 0;
+    int graphY2 = 0;
+    if (sensors.types[sensors.active] == "NOISE") {
+      graphY1 = map(min(max(measures.noise[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.noise[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    } else if (sensors.types[sensors.active] == "BRIGHTNESS") {
+      graphY1 = map(min(max(measures.brightness[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.brightness[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    } else if (sensors.types[sensors.active] == "TEMPERATURE") {
+      graphY1 = map(min(max(measures.temperature[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.temperature[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    }  else if (sensors.types[sensors.active] == "HUMIDITY") {
+      graphY1 = map(min(max(measures.humidity[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.humidity[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    } else if (sensors.types[sensors.active] == "DUST") {
+      graphY1 = map(min(max(measures.dust[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.dust[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    } else if (sensors.types[sensors.active] == "CO") {
+      graphY1 = map(min(max(measures.co[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+      graphY2 = map(min(max(measures.co[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
+    }
+    myGLCD.drawLine(60 + 15 * i, graphY1, 60 + 15 * (i + 1), graphY2);
+  }
+  myGLCD.setColor(255, 255, 255);
+  myGLCD.setFont(Sinclair_S);
+  myGLCD.print("0s", 325, 250);
+  myGLCD.print("10s", 185, 250);
+  myGLCD.print("20s", 55, 250);
+
+  myGLCD.print(minvalue + sensors.units[sensors.active], 16, 235);
+  myGLCD.print(maxvalue + sensors.units[sensors.active], 16, 125);
+  myGLCD.print((int ((maxvalue + minvalue) * 0.5)) + sensors.units[sensors.active], 16, 180);
+  myGLCD.print((int (maxvalue * 0.75 + minvalue * 0.25)) + sensors.units[sensors.active], 16, 152);
+  myGLCD.print((int (maxvalue * 0.25 + minvalue * 0.75)) + sensors.units[sensors.active], 16, 207);
 }
 
 void detectRecordStatus() {
@@ -470,131 +509,8 @@ void detectRecordStatus() {
   toggle_record_prev_value = toggle_record_cur_value;
 }
 
-void detectNewSnapshot() {
-  int new_snapshot_prev_value = digitalRead(NEW_SNAPSHOT);
-  if (prev_snapshot_prev_value == LOW && new_snapshot_prev_value == HIGH) {
-    if (dataFile) {
-      total_snapshots++;
-      dataFile.println((String) measures.timestamp);
-    }
-  }
-  myGLCD.setColor(255, 255, 255);
-  myGLCD.setFont(Dingbats1_XL);
-  myGLCD.print("V", 340, 150);
-  myGLCD.setFont(Sinclair_S);
-  if ( total_snapshots < 10) {
-    myGLCD.print(((String) total_snapshots) +  " SNAPSHOTS  ", RIGHT, 156);
-  } else if ( total_snapshots < 100) {
-    myGLCD.print(((String) total_snapshots) + " SNAPSHOTS ", RIGHT, 156);
-  } else if ( total_snapshots < 1000) {
-    myGLCD.print(((String) total_snapshots) + " SNAPSHOTS", RIGHT, 156);
-  }
-  prev_snapshot_prev_value = new_snapshot_prev_value;
-}
-
-
-void readUTouchPos() {
-  myTouch.read();
-  touchX = SCREEN_WIDTH - myTouch.getY() * 2;  // some reason, the orientation of the screen is wrong, so we manually correct it.
-  touchY = SCREEN_HEIGHT - myTouch.getX();
-}
-
-void renderActiveSensorName() {
-  myGLCD.setFont(Sinclair_M);
-  myGLCD.setColor(255, 255, 255);
-  myGLCD.print(sensors.types[sensors.active] + " SENSOR       ", CENTER, 16);
-}
-
-void renderActiveSensorValue() {
-  long value = 0;
-  if (sensors.types[sensors.active] == "NOISE") {
-    value = measures.noise[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "BRIGHTNESS") {
-    value = measures.brightness[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "TEMPERATURE") {
-    value = measures.temperature[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "PRESSURE") {
-    value = measures.pressure[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "HUMIDITY") {
-    value = measures.humidity[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "DUST") {
-    value = measures.dust[GRAPH_SIZE-2];
-  } else if (sensors.types[sensors.active] == "CO") {
-    value = measures.co[GRAPH_SIZE-2];
-  }
-  String cur_rendered_sensor_value = (String) value;
-  myGLCD.setColor(0, 0, 0);
-  myGLCD.setBackColor(0, 0, 0);
-  myGLCD.fillRect(16, 60, 16 + (SENSOR_VALUE_DIGIT - cur_rendered_sensor_value.length()) * 32 , 60 + 50);
-  myGLCD.setColor(255, 255, 255);
-  myGLCD.setFont(SevenSegNumFontPlusPlus);
-  myGLCD.print(cur_rendered_sensor_value, 16 + (SENSOR_VALUE_DIGIT - cur_rendered_sensor_value.length()) * 32, 60);
-  myGLCD.setFont(Sinclair_M);
-  myGLCD.print(sensors.units[sensors.active], 32 + SENSOR_VALUE_DIGIT * 32, 60 + 30);
-}
-
-void unrenderActiveSensorGraph() {
-  myGLCD.setColor(0, 0, 0);
-  renderGraphHelper();
-}
-
-void renderActiveSensorGraph() {
-  myGLCD.setColor(0, 255, 0);
-  renderGraphHelper();
-}
-
-void renderGraphHelper() {
-  long minvalue = sensors.mins[sensors.active];
-  long maxvalue = sensors.maxs[sensors.active];
-  for (int i=0; i<GRAPH_SIZE-2; i++) {
-    int graphY1 = 0;
-    int graphY2 = 0;
-    if (sensors.types[sensors.active] == "NOISE") {
-      graphY1 = map(min(max(measures.noise[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.noise[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "BRIGHTNESS") {
-      graphY1 = map(min(max(measures.brightness[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.brightness[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "TEMPERATURE") {
-      graphY1 = map(min(max(measures.temperature[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.temperature[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "PRESSURE") {
-      graphY1 = map(min(max(measures.pressure[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.pressure[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "HUMIDITY") {
-      graphY1 = map(min(max(measures.humidity[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.humidity[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "DUST") {
-      graphY1 = map(min(max(measures.dust[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.dust[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    } else if (sensors.types[sensors.active] == "CO") {
-      graphY1 = map(min(max(measures.co[i], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-      graphY2 = map(min(max(measures.co[i+1], minvalue), maxvalue), minvalue, maxvalue, 240, 130);
-    }
-    myGLCD.drawLine(60 + 15 * i, graphY1, 60 + 15 * (i + 1), graphY2);
-  }
-  myGLCD.setColor(255, 255, 255);
-  myGLCD.setFont(Sinclair_S);
-  myGLCD.print("0s", 325, 250);
-  myGLCD.print("10s", 185, 250);
-  myGLCD.print("20s", 55, 250);
-
-  if (sensors.types[sensors.active] == "PRESSURE") {
-    myGLCD.print("120mPA", 16, 125);
-    myGLCD.print("110mPA", 16, 152);
-    myGLCD.print("100mPA", 16, 180);
-    myGLCD.print("90mPA", 16, 207);
-    myGLCD.print("80mPA", 16, 235);
-  } else {
-    myGLCD.print(minvalue + sensors.units[sensors.active], 16, 235);
-    myGLCD.print(maxvalue + sensors.units[sensors.active], 16, 125);
-    myGLCD.print((int ((maxvalue + minvalue) * 0.5)) + sensors.units[sensors.active], 16, 180);
-    myGLCD.print((int (maxvalue * 0.75 + minvalue * 0.25)) + sensors.units[sensors.active], 16, 152);
-    myGLCD.print((int (maxvalue * 0.25 + minvalue * 0.75)) + sensors.units[sensors.active], 16, 207);
-  }
-}
-
 void renderTime() {
+  SPI.setDataMode(SPI_MODE3);
   String timevalue = String(rtc.hour()) + ":";
   if (rtc.minute() < 10) {
     timevalue += "0";
@@ -643,4 +559,27 @@ void renderTime() {
   curtime.Month = (uint8_t) rtc.month();
   curtime.Year = (uint8_t) temp_year;
   measures.timestamp = makeTime(curtime);
+  SPI.setDataMode(SPI_MODE0);
+}
+
+void detectNewSnapshot() {
+  int new_snapshot_prev_value = digitalRead(NEW_SNAPSHOT);
+  if (prev_snapshot_prev_value == LOW && new_snapshot_prev_value == HIGH) {
+    if (dataFile) {
+      total_snapshots++;
+      dataFile.println((String) measures.timestamp);
+    }
+  }
+  myGLCD.setColor(255, 255, 255);
+  myGLCD.setFont(Dingbats1_XL);
+  myGLCD.print("V", 340, 150);
+  myGLCD.setFont(Sinclair_S);
+  if ( total_snapshots < 10) {
+    myGLCD.print(((String) total_snapshots) +  " SNAPSHOTS  ", RIGHT, 156);
+  } else if ( total_snapshots < 100) {
+    myGLCD.print(((String) total_snapshots) + " SNAPSHOTS ", RIGHT, 156);
+  } else if ( total_snapshots < 1000) {
+    myGLCD.print(((String) total_snapshots) + " SNAPSHOTS", RIGHT, 156);
+  }
+  prev_snapshot_prev_value = new_snapshot_prev_value;
 }
